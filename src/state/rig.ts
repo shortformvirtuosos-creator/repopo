@@ -141,7 +141,7 @@ function computePoses(w: number, h: number): Record<PoseName, Pose> {
     }),
     end: P({
       ...SET_DZ, ...SET_CUP, ry: TAU - 0.12, s: 1, set: 1, cupS: 1, flood: 1, bob: 0, shaft: 0.25,
-      cx: -0.3, cy: 2.7, cz: 9.4, tx: -0.45, ty: 1.3, tz: -0.35,
+      cx: -0.3, cy: 4.4, cz: 15.5, tx: -0.45, ty: 1.55, tz: -0.35,
     }),
   }
 }
