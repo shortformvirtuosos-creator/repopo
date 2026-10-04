@@ -11,9 +11,10 @@ const TYPES = {
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.json': 'application/json',
   '.woff2': 'font/woff2',
   '.woff': 'font/woff',
-  '.glb': 'model/gltf-binary',
 }
 
 export function serve(root, base = '/ceif/', port = 0) {

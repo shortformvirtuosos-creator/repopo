@@ -3,23 +3,12 @@ import gsap from 'gsap'
 import { copy } from '../copy'
 import { config } from '../config'
 import { store, useStore } from '../state/store'
-import { live } from '../state/rig'
-import { lenis, scrollToSection } from '../lib/scroll'
+import { lenis, scrollToTime } from '../lib/scroll'
 import { copyText, share } from '../lib/share'
+import { reducedMotion } from '../lib/env'
 import { upper } from '../lib/text'
 
-const DOT_LABELS = [
-  copy.hero.lines.join(' '),
-  copy.engrave.headline,
-  copy.finish.headline,
-  copy.features[0].title,
-  copy.pour.headline,
-  copy.set.headline,
-  copy.ending.headline.join(' '),
-]
-
 export function Chrome() {
-  const section = useStore((s) => s.section)
   const sharing = useStore((s) => s.sharing)
   return (
     <>
@@ -27,54 +16,55 @@ export function Chrome() {
         <i id="progress-bar" />
       </div>
       <header className="chrome">
-        <button className="wordmark" onClick={() => scrollToSection(0)} aria-label={config.brand}>
+        <button className="wordmark" onClick={() => scrollToTime(0)} aria-label={config.brand}>
           {copy.chrome.wordmark}
         </button>
         <button className="btn btn-sm" onClick={share} aria-busy={sharing}>
           {copy.chrome.share}
         </button>
       </header>
-      <nav className="dots">
-        {DOT_LABELS.map((label, i) => (
-          <button
-            key={i}
-            className={i === section ? 'on' : ''}
-            aria-label={label}
-            aria-current={i === section ? 'true' : undefined}
-            onClick={() => scrollToSection(i)}
-          >
-            <i />
-          </button>
-        ))}
-      </nav>
     </>
   )
 }
 
+/** The thin line at the top that shows how far down the page you are. */
+export function startProgress(): () => void {
+  const bar = document.getElementById('progress-bar')
+  let last = -1
+  const tick = () => {
+    if (!bar) return
+    const max = document.documentElement.scrollHeight - window.innerHeight
+    const p = max > 0 ? Math.min(1, Math.max(0, window.scrollY / max)) : 0
+    if (Math.abs(p - last) > 0.0005) {
+      bar.style.transform = `scaleX(${p.toFixed(4)})`
+      last = p
+    }
+  }
+  gsap.ticker.add(tick)
+  return () => gsap.ticker.remove(tick)
+}
+
 const easeInOutSine = (t: number) => -(Math.cos(Math.PI * t) - 1) / 2
 
-/** Water heats to 100 °C, boils, and the džezva drops in. */
-export function Loader({ fontsReady, onDone }: { fontsReady: Promise<unknown>; onDone: () => void }) {
-  const sceneReady = useStore((s) => s.sceneReady)
+/** Water heats to 100 °C and boils; then the first photograph comes up. */
+export function Loader({ ready, onDone }: { ready: Promise<unknown>; onDone: () => void }) {
   const [n, setN] = useState(0)
   const [boiled, setBoiled] = useState(false)
   const [gone, setGone] = useState(false)
   const el = useRef<HTMLDivElement>(null)
-  const ready = useRef({ scene: false, fonts: false })
-  ready.current.scene = sceneReady
 
   useEffect(() => {
     // the static boot screen from index.html has done its job
     document.getElementById('boot')?.remove()
     let raf = 0
     let finished = false
+    let ok = false
     const t0 = performance.now()
-    const dur = live.reduced ? 1100 : 2600
-    fontsReady.then(() => (ready.current.fonts = true))
-    // never keep anyone waiting forever (e.g. no WebGL)
-    const giveUp = window.setTimeout(() => (ready.current = { scene: true, fonts: true }), 9000)
+    const dur = reducedMotion() ? 1100 : 2600
+    ready.then(() => (ok = true))
+    // never keep anyone waiting forever
+    const giveUp = window.setTimeout(() => (ok = true), 9000)
     const loop = (now: number) => {
-      const ok = ready.current.scene && ready.current.fonts
       let v = 100 * easeInOutSine(Math.min(1, (now - t0) / dur))
       if (!ok) v = Math.min(v, 96)
       setN(Math.floor(v))
@@ -86,11 +76,11 @@ export function Loader({ fontsReady, onDone }: { fontsReady: Promise<unknown>; o
           if (!el.current) return
           gsap.to(el.current, {
             autoAlpha: 0,
-            duration: live.reduced ? 0.4 : 0.9,
+            duration: reducedMotion() ? 0.4 : 0.9,
             ease: 'power2.inOut',
             onComplete: () => setGone(true),
           })
-        }, 700)
+        }, 750)
         return
       }
       raf = requestAnimationFrame(loop)
@@ -100,7 +90,7 @@ export function Loader({ fontsReady, onDone }: { fontsReady: Promise<unknown>; o
       cancelAnimationFrame(raf)
       window.clearTimeout(giveUp)
     }
-  }, [fontsReady, onDone])
+  }, [ready, onDone])
 
   if (gone) return null
   return (
@@ -114,7 +104,7 @@ export function Loader({ fontsReady, onDone }: { fontsReady: Promise<unknown>; o
   )
 }
 
-/** Full-screen picture when the phone can't share files directly (Instagram, Viber in-app browsers). */
+/** Full-screen picture when the phone can't share files directly (Instagram, Viber in-app browsers) and on desktop. */
 export function ShareOverlay() {
   const ov = useStore((s) => s.overlay)
   const name = useStore((s) => s.name)

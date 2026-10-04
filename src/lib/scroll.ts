@@ -1,20 +1,45 @@
+// Scrolling. The photos and words live in fixed layers; scrolling through the
+// tall #track scrubs one timeline whose time is measured in screen heights:
+// each photo zooms in slowly, then cross-fades into the next one, and the
+// headlines slide up out of their masks.
+
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import Lenis from 'lenis'
-import { SEG, layout, live, segs } from '../state/rig'
-import { store } from '../state/store'
+import { SCENES, ZOOM } from '../scenes'
+import { DESK_QUERY, PHONE_QUERY } from './layout'
+import { reducedMotion } from './env'
+import { chromeClash } from './place'
 
 gsap.registerPlugin(ScrollTrigger)
 
 export let lenis: Lenis | null = null
+let master: gsap.core.Timeline | null = null
 
-export const SECTION_IDS = ['s-hero', 's-engrave', 's-finish', 's-features', 's-pour', 's-set', 's-end']
+/** Where each scene starts on the timeline (screen heights). */
+export const STARTS = SCENES.reduce<number[]>((a, _s, i) => (a.push(i ? a[i - 1] + SCENES[i - 1].length : 0), a), [])
+export const TOTAL = STARTS[STARTS.length - 1] + SCENES[SCENES.length - 1].length
+
+/** Half the cross-fade between two photos. */
+const X = 0.26
+
+/** Moments worth landing on (used by buttons and the screenshot script). */
+export const MOMENTS = {
+  pot: 0,
+  /** phone: the fields are in */
+  potFields: 1.45,
+  explosion: STARTS[1] + 0.7,
+  copper: STARTS[2] + 0.7,
+  pour: STARTS[3] + 0.7,
+  set: STARTS[4] + 0.6,
+  ending: TOTAL,
+}
 
 const inOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2)
 
 export function initSmoothScroll() {
-  if (live.reduced) return
-  lenis = new Lenis({ lerp: 0.085, wheelMultiplier: 0.9 })
+  if (reducedMotion()) return
+  lenis = new Lenis({ lerp: 0.09, wheelMultiplier: 0.9 })
   lenis.on('scroll', ScrollTrigger.update)
   gsap.ticker.add((time) => lenis?.raf(time * 1000))
   gsap.ticker.lagSmoothing(0)
@@ -27,186 +52,179 @@ export function unlockScroll() {
   ScrollTrigger.refresh()
 }
 
-export function scrollToSection(i: number, then?: () => void) {
-  const el = document.getElementById(SECTION_IDS[i])
-  if (!el) return
-  if (lenis) {
-    lenis.scrollTo(el, { duration: 1.8, easing: inOut, onComplete: () => then?.() })
+/** Scroll position for a moment on the timeline. */
+function yFor(t: number) {
+  const st = master?.scrollTrigger
+  if (!st) return 0
+  return st.start + ((st.end - st.start) * Math.min(TOTAL, Math.max(0, t))) / TOTAL
+}
+
+export function scrollToTime(t: number, then?: () => void, immediate = false) {
+  const y = yFor(t)
+  if (Math.abs(window.scrollY - y) < 2) {
+    // already there (Lenis would not call back)
+    then?.()
+    return
+  }
+  if (lenis && !immediate) {
+    const d = Math.abs(window.scrollY - y) / window.innerHeight
+    lenis.scrollTo(y, { duration: Math.min(2.4, 0.6 + d * 0.35), easing: inOut, onComplete: () => then?.() })
   } else {
-    el.scrollIntoView({ behavior: 'auto' })
+    if (lenis) lenis.scrollTo(y, { immediate: true, force: true })
+    else window.scrollTo(0, y)
     then?.()
   }
 }
 
-const lines = (scope: string) => gsap.utils.toArray<HTMLElement>(`${scope} .mask > span`)
-
-/** Build every scroll-driven timeline. Returns a cleanup function. */
-export function buildScroll(): () => void {
-  ScrollTrigger.addEventListener('refreshInit', layout)
-  layout()
-  const ctx = gsap.context(() => (live.reduced ? buildReduced() : buildScrubbed()))
-
-  SECTION_IDS.forEach((id, i) => {
-    ScrollTrigger.create({
-      trigger: '#' + id,
-      start: 'top 55%',
-      end: 'bottom 55%',
-      onToggle: (self) => self.isActive && store.set({ section: i }),
+/** Bring the surname field into view and focus it. */
+export function focusSurname() {
+  const phone = matchMedia(PHONE_QUERY).matches
+  scrollToTime(phone ? MOMENTS.potFields : 0, () => {
+    // after React has shown the fields (when coming from a shared link)
+    requestAnimationFrame(() => {
+      const el = document.getElementById('in-prezime') as HTMLInputElement | null
+      el?.focus({ preventScroll: true })
     })
   })
-  ScrollTrigger.create({
-    trigger: '#s-pour',
-    start: 'top 30%',
-    end: 'bottom 70%',
-    onToggle: (self) => {
-      live.pourActive = self.isActive
-      if (!self.isActive) {
-        live.hold = false
-        store.set({ holding: false })
-      }
-    },
-  })
+}
 
+const q = (sel: string) => gsap.utils.toArray<HTMLElement>(sel)
+
+/** Build the scroll timeline. Rebuilt when the screen switches between the phone and desktop layouts. */
+export function buildScroll(): () => void {
+  const mm = gsap.matchMedia()
+  mm.add({ phone: PHONE_QUERY, desk: DESK_QUERY }, (ctx) => {
+    build(Boolean(ctx.conditions?.phone))
+  })
   const onFonts = () => ScrollTrigger.refresh()
   document.fonts?.ready.then(onFonts)
+  window.addEventListener('ceif:placed', updateChrome)
   return () => {
-    ScrollTrigger.removeEventListener('refreshInit', layout)
-    ctx.revert()
-    ScrollTrigger.getAll().forEach((t) => t.kill())
+    window.removeEventListener('ceif:placed', updateChrome)
+    mm.revert()
+    master = null
   }
 }
 
-/** A transition into a section: scrubbed while its top travels from the bottom of the screen to the top. */
-function enter(id: string, seg: number) {
+/** Hide the wordmark or the top "Podijeli" while a photo that it would cover is on screen. */
+function updateChrome() {
+  const st = master?.scrollTrigger
+  const t = st ? st.progress * TOTAL : 0
+  const clash = chromeClash()
+  let mark = false
+  let share = false
+  SCENES.forEach((_, i) => {
+    const from = i === 0 ? -1 : STARTS[i] - X
+    const to = i === SCENES.length - 1 ? TOTAL + 1 : STARTS[i + 1] + X
+    if (t < from || t > to || !clash[i]) return
+    mark ||= clash[i].mark
+    share ||= clash[i].share
+  })
+  const root = document.documentElement.classList
+  root.toggle('clear-mark', mark)
+  root.toggle('clear-share', share)
+}
+
+function build(phone: boolean) {
+  const reduced = reducedMotion()
+  const v = phone ? '.v-phone' : '.v-desk'
+  const lines = (scope: string) => q(`${scope} ${v} .mask > span, ${scope} .v-all .mask > span`)
+  const rise = (scope: string) => q(`${scope} [data-rise]`)
+  const zoom = reduced ? 1 : ZOOM
+
   const tl = gsap.timeline({
-    defaults: { ease: 'power2.inOut' },
-    scrollTrigger: { trigger: '#' + id, start: 'top bottom', end: 'top top', scrub: true },
-  })
-  tl.fromTo(segs[seg], { p: 0 }, { p: 1, duration: 1 }, 0)
-  const ls = lines('#' + id + ' .enter-head')
-  if (ls.length) tl.fromTo(ls, { yPercent: 118 }, { yPercent: 0, duration: 0.42, stagger: 0.08, ease: 'power3.inOut' }, 0.42)
-  const rise = gsap.utils.toArray<HTMLElement>('#' + id + ' [data-rise]')
-  if (rise.length) tl.fromTo(rise, { autoAlpha: 0, y: 36 }, { autoAlpha: 1, y: 0, duration: 0.36, stagger: 0.06 }, 0.58)
-  return tl
-}
-
-function buildScrubbed() {
-  // hero is revealed by the intro, then simply scrolls away
-  gsap.set(lines('#s-hero'), { yPercent: 118 })
-  gsap.set('#s-hero [data-fade]', { autoAlpha: 0, y: 18 })
-
-  enter('s-engrave', SEG.heroEngrave)
-  enter('s-finish', SEG.engraveFinish)
-  enter('s-features', SEG.finishF1)
-
-  // feature walk: one pinned, scrubbed timeline
-  const f = gsap.timeline({
-    defaults: { ease: 'power3.inOut' },
-    scrollTrigger: { trigger: '#s-features', start: 'top top', end: 'bottom bottom', scrub: true },
-  })
-  const feat = (i: number) => ({
-    lines: lines(`#s-features .feat-${i}`),
-    body: `#s-features .feat-${i} .feat-body`,
-  })
-  const inAt = [0, 0.38, 0.7]
-  const outAt = [0.26, 0.58]
-  for (let i = 0; i < 3; i++) {
-    const { lines: ls, body } = feat(i)
-    f.fromTo(ls, { yPercent: 118 }, { yPercent: 0, duration: 0.08, stagger: 0.02 }, inAt[i])
-    f.fromTo(body, { autoAlpha: 0, y: 24 }, { autoAlpha: 1, y: 0, duration: 0.07, ease: 'power2.inOut' }, inAt[i] + 0.03)
-    if (i < 2) {
-      f.to(ls, { yPercent: -118, duration: 0.07, stagger: 0.015 }, outAt[i])
-      f.to(body, { autoAlpha: 0, y: -18, duration: 0.06, ease: 'power2.inOut' }, outAt[i])
-    }
-  }
-  f.fromTo(segs[SEG.f1f2], { p: 0 }, { p: 1, duration: 0.13, ease: 'power2.inOut' }, 0.29)
-  f.fromTo(segs[SEG.f2f3], { p: 0 }, { p: 1, duration: 0.13, ease: 'power2.inOut' }, 0.61)
-  f.set({}, {}, 1)
-
-  enter('s-pour', SEG.f3Pour)
-  enter('s-set', SEG.pourSet)
-
-  // the set: slow orbit while pinned
-  gsap
-    .timeline({ scrollTrigger: { trigger: '#s-set', start: 'top top', end: 'bottom bottom', scrub: true } })
-    .fromTo(segs[SEG.setOrbit], { p: 0 }, { p: 1, duration: 1, ease: 'power1.inOut' })
-
-  enter('s-end', SEG.setEnd)
-}
-
-/** Reduced motion: no scrubbing. Each section switches pose under a short fade. */
-function buildReduced() {
-  const canvas = document.getElementById('gl')
-  let fading: gsap.core.Tween | null = null
-  const jump = () => {
-    fading?.kill()
-    if (!canvas) {
-      live.snap = true
-      return
-    }
-    fading = gsap.to(canvas, {
-      opacity: 0,
-      duration: 0.2,
-      ease: 'power1.inOut',
-      onComplete: () => {
-        live.snap = true
-        fading = gsap.to(canvas, { opacity: 1, duration: 0.45, delay: 0.05, ease: 'power1.inOut' })
-      },
-    })
-  }
-  const setSeg = (i: number, on: boolean) => {
-    const v = on ? 1 : 0
-    if (segs[i].p !== v) {
-      segs[i].p = v
-      jump()
-    }
-  }
-  const step = (id: string, seg: number) =>
-    ScrollTrigger.create({
-      trigger: '#' + id,
-      start: 'top bottom',
-      end: 'top top',
-      onUpdate: (s) => setSeg(seg, s.progress >= 0.5),
-      onRefresh: (s) => setSeg(seg, s.progress >= 0.5),
-    })
-  step('s-engrave', SEG.heroEngrave)
-  step('s-finish', SEG.engraveFinish)
-  step('s-features', SEG.finishF1)
-  step('s-pour', SEG.f3Pour)
-  step('s-set', SEG.pourSet)
-  step('s-end', SEG.setEnd)
-
-  const featEl = document.getElementById('s-features')
-  ScrollTrigger.create({
-    trigger: '#s-features',
-    start: 'top top',
-    end: 'bottom bottom',
-    onUpdate: (s) => {
-      const k = s.progress < 0.36 ? 0 : s.progress < 0.68 ? 1 : 2
-      featEl?.setAttribute('data-step', String(k))
-      setSeg(SEG.f1f2, k >= 1)
-      setSeg(SEG.f2f3, k >= 2)
+    defaults: { ease: 'none' },
+    scrollTrigger: {
+      trigger: '#track',
+      start: 'top top',
+      end: 'bottom bottom',
+      scrub: reduced ? true : lenis ? true : 0.5,
+      onUpdate: updateChrome,
+      onRefresh: updateChrome,
     },
   })
+  master = tl
+  tl.set({}, {}, TOTAL)
 
-  // sections fade in as they arrive
-  document.querySelectorAll<HTMLElement>('.sec').forEach((el) => {
-    ScrollTrigger.create({ trigger: el, start: 'top 75%', end: 'bottom 25%', toggleClass: 'is-in' })
+  // photos: slow zoom, cross-fade into the next, hide the one underneath
+  SCENES.forEach((_, i) => {
+    const photo = `#photo-${i}`
+    const plate = `#plate-${i}`
+    const z0 = i === 0 ? 0 : STARTS[i] - X
+    const z1 = i === SCENES.length - 1 ? TOTAL : STARTS[i + 1] + X
+    tl.fromTo(plate, { scale: 1 }, { scale: zoom, duration: z1 - z0 }, z0)
+    if (i > 0) tl.fromTo(photo, { autoAlpha: 0 }, { autoAlpha: 1, duration: 2 * X, ease: 'power1.inOut' }, STARTS[i] - X)
+    if (i < SCENES.length - 1) tl.set(photo, { autoAlpha: 0 }, STARTS[i + 1] + X + 0.001)
   })
+
+  const enter = (scope: string, at: number) => {
+    const ls = lines(scope)
+    if (ls.length) {
+      if (reduced) tl.fromTo(ls, { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.25 }, at)
+      else tl.fromTo(ls, { yPercent: 130 }, { yPercent: 0, duration: 0.34, stagger: 0.05, ease: 'power3.out' }, at)
+    }
+    const rs = rise(scope)
+    if (rs.length) tl.fromTo(rs, { autoAlpha: 0, y: reduced ? 0 : 26 }, { autoAlpha: 1, y: 0, duration: 0.3, stagger: 0.04, ease: 'power2.out' }, at + 0.12)
+  }
+  const exit = (scope: string, at: number) => {
+    const ls = lines(scope)
+    if (ls.length) {
+      if (reduced) tl.fromTo(ls, { autoAlpha: 1 }, { autoAlpha: 0, duration: 0.2, immediateRender: false }, at)
+      else tl.fromTo(ls, { yPercent: 0 }, { yPercent: -130, duration: 0.28, stagger: 0.035, ease: 'power3.in', immediateRender: false }, at)
+    }
+    const rs = rise(scope)
+    if (rs.length) tl.fromTo(rs, { autoAlpha: 1, y: 0 }, { autoAlpha: 0, y: reduced ? 0 : -18, duration: 0.22, ease: 'power2.in', immediateRender: false }, at)
+  }
+
+  // 1. the pot. Desktop: headline and fields together. Phone: headline, then the fields.
+  if (phone) {
+    exit('#t-pot .z-head', 0.5)
+    enter('#t-pot .z-ctrl', 0.78)
+    exit('#t-pot .z-ctrl', STARTS[1] - 0.56)
+  } else {
+    exit('#t-pot .z-head', STARTS[1] - 0.6)
+    exit('#t-pot .z-ctrl', STARTS[1] - 0.6)
+  }
+
+  // 2–4
+  ;['#t-explosion', '#t-copper', '#t-pour'].forEach((id, k) => {
+    const i = k + 1
+    enter(id, STARTS[i] + 0.04)
+    exit(id, STARTS[i + 1] - 0.56)
+  })
+
+  // 5. "Dođi na kafu.", then the ending on the same photo
+  const s5 = STARTS[4]
+  enter('#t-set', s5 + 0.04)
+  exit('#t-set', s5 + 0.95)
+  enter('#t-end', s5 + 1.25)
 }
 
-/** The hero arrives after the loader: the džezva drops in, the headline masks in. */
+/** The page arrives after the loader: the photo fades up, the headline masks in. */
 export function playIntro() {
-  if (live.reduced) {
-    live.drop = 1
-    live.snap = true
-    document.getElementById('s-hero')?.classList.add('is-in')
+  const phone = matchMedia(PHONE_QUERY).matches
+  const v = phone ? '.v-phone' : '.v-desk'
+  const lines = q(`#t-pot ${v} .mask > span, #t-pot .v-all .mask > span`)
+  const rise = q(phone ? '#t-pot .z-head [data-rise]' : '#t-pot .z-head [data-rise], #t-pot .z-ctrl [data-rise]')
+  if (reducedMotion()) {
+    gsap.set('#stage', { autoAlpha: 1 })
+    gsap.set(lines, { yPercent: 0, autoAlpha: 1 })
+    gsap.set(rise, { autoAlpha: 1, y: 0 })
     unlockScroll()
     return
   }
   const tl = gsap.timeline()
-  tl.to(live, { drop: 1, duration: 1.9, ease: 'power3.inOut' }, 0)
-  tl.to(lines('#s-hero'), { yPercent: 0, duration: 1.2, stagger: 0.12, ease: 'power3.inOut' }, 0.85)
-  tl.to('#s-hero [data-fade]', { autoAlpha: 1, y: 0, duration: 0.9, stagger: 0.1, ease: 'power2.inOut' }, 1.3)
-  tl.add(unlockScroll, 1.2)
+  tl.fromTo('#stage', { autoAlpha: 0 }, { autoAlpha: 1, duration: 1.5, ease: 'power2.inOut' }, 0)
+  tl.fromTo('#plate-0 .plate-inner', { scale: 1.035 }, { scale: 1, duration: 2.6, ease: 'power3.out' }, 0)
+  tl.to(lines, { yPercent: 0, duration: 1.1, stagger: 0.12, ease: 'power3.out' }, 0.55)
+  tl.to(rise, { autoAlpha: 1, y: 0, duration: 0.8, stagger: 0.07, ease: 'power2.out' }, 0.95)
+  tl.add(unlockScroll, 1.1)
+}
+
+/** Before the loader finishes: scene 1 is hidden and waits for the intro. */
+export function prepareIntro() {
+  gsap.set('#stage', { autoAlpha: 0 })
+  gsap.set(q('#t-pot .mask > span'), { yPercent: reducedMotion() ? 0 : 130, autoAlpha: reducedMotion() ? 0 : 1 })
+  gsap.set(q('#t-pot .z-head [data-rise]'), { autoAlpha: 0, y: reducedMotion() ? 0 : 20 })
+  if (!matchMedia(PHONE_QUERY).matches) gsap.set(q('#t-pot .z-ctrl [data-rise]'), { autoAlpha: 0, y: reducedMotion() ? 0 : 20 })
 }

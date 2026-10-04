@@ -11,19 +11,15 @@ export type State = {
   /** What the visitor typed (already filtered). */
   name: string
   town: string
-  finish: number
-  /** Family from an incoming share link. */
+  /** Family from an incoming share link, until the visitor starts their own. */
   shared: { name: string; town: string } | null
-  /** Index of the example currently engraved while the inputs are empty. */
+  /** Index of the example engraved while the fields are empty. */
   example: number
-  sceneReady: boolean
   intro: 'loading' | 'done'
   overlay: Overlay
   sharing: boolean
-  poured: boolean
-  focused: boolean
-  holding: boolean
-  section: number
+  /** The phone layout is in use (portrait screens). */
+  phone: boolean
 }
 
 type Listener = () => void
@@ -31,17 +27,12 @@ type Listener = () => void
 let state: State = {
   name: '',
   town: '',
-  finish: 0,
   shared: null,
   example: 0,
-  sceneReady: false,
   intro: 'loading',
   overlay: null,
   sharing: false,
-  poured: false,
-  focused: false,
-  holding: false,
-  section: 0,
+  phone: false,
 }
 
 const listeners = new Set<Listener>()

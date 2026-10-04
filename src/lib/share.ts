@@ -1,11 +1,10 @@
 import { copy } from '../copy'
-import { FINISHES } from '../three/finishes'
-import { shareApi } from '../three/ShareStudio'
 import { store } from '../state/store'
 import { buildLink } from './link'
 import { isPhone } from './env'
 import { clean, slug } from './text'
-import { scrollToSection } from './scroll'
+import { focusSurname } from './scroll'
+import { renderShareImage } from './shareImage'
 
 type Rendered = { key: string; blob: Blob; dataUrl: string }
 
@@ -15,7 +14,7 @@ let pendingKey = ''
 
 const keyOf = () => {
   const s = store.get()
-  return [clean(s.name), clean(s.town), s.finish].join('|')
+  return [clean(s.name), clean(s.town)].join('|')
 }
 
 function toBlob(c: HTMLCanvasElement): Promise<Blob> {
@@ -28,10 +27,8 @@ async function render(): Promise<Rendered> {
   if (pending && pendingKey === key) return pending
   pendingKey = key
   pending = (async () => {
-    // the share renderer lives inside the 3D scene; wait for it if needed
-    for (let i = 0; i < 100 && !shareApi.render; i++) await new Promise((r) => setTimeout(r, 50))
-    if (!shareApi.render) throw new Error('renderer not ready')
-    const canvas = await shareApi.render()
+    const s = store.get()
+    const canvas = await renderShareImage(clean(s.name), clean(s.town))
     const blob = await toBlob(canvas)
     const dataUrl = canvas.toDataURL('image/png')
     const out = { key, blob, dataUrl }
@@ -55,14 +52,7 @@ export function prepareShare() {
   }, 900)
 }
 
-export function focusSurname() {
-  scrollToSection(1, () => {
-    const el = document.getElementById('in-prezime') as HTMLInputElement | null
-    el?.focus({ preventScroll: true })
-  })
-}
-
-/** The "Podijeli" button. */
+/** The "Podijeli" buttons. */
 export async function share() {
   const s = store.get()
   const name = clean(s.name)
@@ -72,8 +62,7 @@ export async function share() {
   }
   if (s.sharing) return
   const town = clean(s.town)
-  const finish = FINISHES[s.finish]
-  const link = buildLink(name, town, finish.id)
+  const link = buildLink(name, town)
   const file = `dzezva-porodice-${slug(name) || 'ceif'}.png`
   const phone = isPhone()
 
