@@ -1,0 +1,87 @@
+{
+  "1-pot": {
+    "source": "flow/1-pot.jpg",
+    "w": 2000,
+    "h": 1116,
+    "files": [
+      {
+        "file": "photos/1-pot-1280.webp",
+        "w": 1280,
+        "h": 714
+      },
+      {
+        "file": "photos/1-pot-2560.webp",
+        "w": 2000,
+        "h": 1116
+      }
+    ]
+  },
+  "2-explosion": {
+    "source": "flow/2-explosion.jpg",
+    "w": 2000,
+    "h": 1116,
+    "files": [
+      {
+        "file": "photos/2-explosion-1280.webp",
+        "w": 1280,
+        "h": 714
+      },
+      {
+        "file": "photos/2-explosion-2560.webp",
+        "w": 2000,
+        "h": 1116
+      }
+    ]
+  },
+  "3-copper": {
+    "source": "flow/3-copper.jpg",
+    "w": 2000,
+    "h": 1116,
+    "files": [
+      {
+        "file": "photos/3-copper-1280.webp",
+        "w": 1280,
+        "h": 714
+      },
+      {
+        "file": "photos/3-copper-2560.webp",
+        "w": 2000,
+        "h": 1116
+      }
+    ]
+  },
+  "4-pour": {
+    "source": "flow/4-pour.jpg",
+    "w": 2000,
+    "h": 1116,
+    "files": [
+      {
+        "file": "photos/4-pour-1280.webp",
+        "w": 1280,
+        "h": 714
+      },
+      {
+        "file": "photos/4-pour-2560.webp",
+        "w": 2000,
+        "h": 1116
+      }
+    ]
+  },
+  "5-set": {
+    "source": "flow/5-set.jpg",
+    "w": 2000,
+    "h": 1116,
+    "files": [
+      {
+        "file": "photos/5-set-1280.webp",
+        "w": 1280,
+        "h": 714
+      },
+      {
+        "file": "photos/5-set-2560.webp",
+        "w": 2000,
+        "h": 1116
+      }
+    ]
+  }
+}
